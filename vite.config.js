@@ -10,7 +10,7 @@ export default defineConfig({
     'process.env': {},
     'process.versions': {},
     'process.platform': '"browser"',
-    'process.nextTick': '((cb) => setTimeout(cb, 0))',
+    'process.nextTick': '"(function(cb) { return setTimeout(cb, 0); })"',
     Buffer: ['buffer', 'Buffer']
   },
   resolve: {
