@@ -37,7 +37,7 @@ function App() {
 
   return (
     <ChakraProvider>
-      <Router>
+      <Router basename="/ChatApp">
         <Routes>
           <Route
             path="/"
