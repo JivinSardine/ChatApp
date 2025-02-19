@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem, Center, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton, useDisclosure, Divider } from '@chakra-ui/react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem, Center, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton, useDisclosure, Divider, Image } from '@chakra-ui/react';
 import CryptoJS from 'crypto-js';
 import { ref, onValue, push, set, serverTimestamp, query, orderByChild, equalTo, get, update } from 'firebase/database';
 import { FaVideo, FaPhone, FaMicrophone, FaMicrophoneSlash, FaVideoSlash, FaPaperclip, FaPlus, FaCog } from 'react-icons/fa';
@@ -10,36 +10,37 @@ import Peer from 'simple-peer';
 import { database, auth } from '../App';
 
 const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
-  if (!user) return null;
-  
+  const formatLastSeen = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const date = new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
   return (
     <Modal isOpen={isOpen} onClose={onClose}>
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader>Profile Settings</ModalHeader>
+        <ModalHeader>User Profile</ModalHeader>
         <ModalCloseButton />
         <ModalBody>
           <VStack spacing={4} align="center">
-            <Avatar
-              size="2xl"
-              src={user.photoURL}
-              name={user.displayName}
-            />
-            <Text fontSize="xl" fontWeight="bold">
-              {user.displayName}
-            </Text>
-            <Text color="gray.600">
-              {user.description || 'No description available'}
-            </Text>
+            <Avatar size="2xl" src={user?.photoURL} name={user?.displayName} />
+            <Text fontSize="xl" fontWeight="bold">{user?.displayName}</Text>
+            <Text>{user?.description || 'No description available'}</Text>
             <Text fontSize="sm" color="gray.500">
-              Last seen: {formatLastSeen(user.lastSeen)}
+              Last seen: {formatLastSeen(user?.lastSeen)}
             </Text>
           </VStack>
         </ModalBody>
         <ModalFooter>
-          <Button colorScheme="blue" onClick={onClose}>
-            Close
-          </Button>
+          <Button colorScheme="blue" onClick={onClose}>Close</Button>
         </ModalFooter>
       </ModalContent>
     </Modal>
@@ -207,43 +208,6 @@ const handleDeleteAccount = async () => {
   }
 };
 
-const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
-  if (!user) return null;
-  
-  return (
-    <Modal isOpen={isOpen} onClose={onClose}>
-      <ModalOverlay />
-      <ModalContent>
-        <ModalHeader>User Profile</ModalHeader>
-        <ModalCloseButton />
-        <ModalBody>
-          <VStack spacing={4} align="center">
-            <Avatar
-              size="2xl"
-              src={user.photoURL}
-              name={user.displayName}
-            />
-            <Text fontSize="xl" fontWeight="bold">
-              {user.displayName}
-            </Text>
-            <Text color="gray.600">
-              {user.description || 'No description available'}
-            </Text>
-            <Text fontSize="sm" color="gray.500">
-              Last seen: {formatLastSeen(user.lastSeen)}
-            </Text>
-          </VStack>
-        </ModalBody>
-        <ModalFooter>
-          <Button colorScheme="blue" onClick={onClose}>
-            Close
-          </Button>
-        </ModalFooter>
-      </ModalContent>
-    </Modal>
-  );
-};
-
   const toast = useToast();
 
   useEffect(() => {
@@ -368,7 +332,14 @@ const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
   const formatLastSeen = (timestamp) => {
     if (!timestamp) return 'Never';
     const date = new Date(timestamp);
-    return date.toLocaleString();
+    return date.toLocaleString('en-US', {
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
   };
 
   useEffect(() => {
@@ -929,36 +900,32 @@ const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
                             borderRadius="2xl"
                             boxShadow="sm"
                           >
-                            {message.fileUrl ? (
-                              message.fileType === 'image' ? (
-                                <Image
-                                  src={message.fileUrl}
-                                  maxH="200px"
-                                  borderRadius="md"
-                                  alt="Shared image"
-                                />
-                              ) : (
-                                <Link href={message.fileUrl} isExternal color={isOwnMessage ? 'white' : 'blue.500'}>
-                                  📎 Attachment
-                                </Link>
-                              )
-                            ) : (
-                              <Text>{message.text}</Text>
-                            )}
+                            {message.text}
                           </Box>
-                          <Text fontSize="xs" color="gray.500">
+                          {message.fileUrl && message.fileType === 'image' && (
+                            <Image
+                              src={message.fileUrl}
+                              maxH="200px"
+                              borderRadius="md"
+                              alt="Shared image"
+                            />
+                          )}
+                          {message.text && (
+                            <Text color="black">{message.text}</Text>
+                          )}
+                          <Text fontSize="xs" color="gray.500" mt={1}>
                             {new Date(message.timestamp).toLocaleTimeString()}
                           </Text>
                         </VStack>
-                        {isOwnMessage && (
-                          <Avatar
-                            size="sm"
-                            src={user.photoURL}
-                            name={user.displayName}
-                          />
-                        )}
-                      </HStack>
-                    );
+                      {isOwnMessage && (
+                        <Avatar
+                          size="sm"
+                          src={user.photoURL}
+                          name={user.displayName}
+                        />
+                      )}
+                    </HStack>
+                  );
                   })}
                 </VStack>
               </Box>
