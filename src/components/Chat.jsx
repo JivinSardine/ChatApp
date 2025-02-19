@@ -1,32 +1,249 @@
 import { useEffect, useState, useRef } from 'react';
-import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem, Center, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton, useDisclosure } from '@chakra-ui/react';
+import { useNavigate } from 'react-router-dom';
+import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem, Center, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton, useDisclosure, Divider } from '@chakra-ui/react';
 import CryptoJS from 'crypto-js';
-import { ref, onValue, push, set, serverTimestamp, query, orderByChild, equalTo } from 'firebase/database';
+import { ref, onValue, push, set, serverTimestamp, query, orderByChild, equalTo, get, update } from 'firebase/database';
 import { FaVideo, FaPhone, FaMicrophone, FaMicrophoneSlash, FaVideoSlash, FaPaperclip, FaPlus, FaCog } from 'react-icons/fa';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { updateProfile } from 'firebase/auth';
 import Peer from 'simple-peer';
 import { database, auth } from '../App';
 
+const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
+  if (!user) return null;
+  
+  return (
+    <Modal isOpen={isOpen} onClose={onClose}>
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>Profile Settings</ModalHeader>
+        <ModalCloseButton />
+        <ModalBody>
+          <VStack spacing={4} align="center">
+            <Avatar
+              size="2xl"
+              src={user.photoURL}
+              name={user.displayName}
+            />
+            <Text fontSize="xl" fontWeight="bold">
+              {user.displayName}
+            </Text>
+            <Text color="gray.600">
+              {user.description || 'No description available'}
+            </Text>
+            <Text fontSize="sm" color="gray.500">
+              Last seen: {formatLastSeen(user.lastSeen)}
+            </Text>
+          </VStack>
+        </ModalBody>
+        <ModalFooter>
+          <Button colorScheme="blue" onClick={onClose}>
+            Close
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+};
+
 const Chat = ({ user }) => {
+  const navigate = useNavigate();
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isUserProfileOpen, onOpen: onUserProfileOpen, onClose: onUserProfileClose } = useDisclosure();
   const [newDisplayName, setNewDisplayName] = useState(user.displayName);
+  const [newDescription, setNewDescription] = useState('');
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [users, setUsers] = useState({});
   const [selectedUser, setSelectedUser] = useState(null);
+  const [viewingUser, setViewingUser] = useState(null);
   const [calling, setCalling] = useState(false);
   const [receiving, setReceiving] = useState(false);
   const [stream, setStream] = useState(null);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [unreadMessages, setUnreadMessages] = useState({});
+  
   const fileInputRef = useRef();
   const photoInputRef = useRef();
-  
   const peerRef = useRef();
   const localVideoRef = useRef();
   const remoteVideoRef = useRef();
+const handleUserClick = (userId) => {
+  setSelectedUser(userId);
+  setUnreadMessages(prev => ({ ...prev, [userId]: 0 }));
+};
+
+const handleProfileClick = (userId) => {
+  setViewingUser(users[userId]);
+  onUserProfileOpen();
+};
+
+const handleProfilePictureChange = async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const CLOUDINARY_CLOUD_NAME = 'dh77mjbpt';
+  const UPLOAD_PRESET = 'ml_default';
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', UPLOAD_PRESET);
+
+  try {
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
+      {
+        method: 'POST',
+        body: formData
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error?.message || 'Upload failed');
+    }
+
+    const data = await response.json();
+    await updateProfile(user, { photoURL: data.secure_url });
+    const userRef = ref(database, `users/${user.uid}`);
+    await set(userRef, {
+      ...users[user.uid],
+      photoURL: data.secure_url
+    });
+
+    toast({
+      title: 'Profile Picture Updated',
+      description: 'Your profile picture has been successfully updated',
+      status: 'success',
+      duration: 3000,
+      isClosable: true
+    });
+  } catch (error) {
+    toast({
+      title: 'Error',
+      description: 'Failed to update profile picture: ' + error.message,
+      status: 'error',
+      duration: 5000,
+      isClosable: true
+    });
+  }
+};
+
+const handleSaveProfile = async () => {
+  try {
+    const userRef = ref(database, `users/${user.uid}`);
+    await set(userRef, {
+      ...users[user.uid],
+      displayName: newDisplayName,
+      description: newDescription
+    });
+    toast({
+      title: 'Profile Updated',
+      description: 'Your profile has been successfully updated',
+      status: 'success',
+      duration: 3000,
+      isClosable: true
+    });
+    onClose();
+  } catch (error) {
+    toast({
+      title: 'Error',
+      description: 'Failed to update profile',
+      status: 'error',
+      duration: 3000,
+      isClosable: true
+    });
+  }
+};
+
+const handleSignOut = () => {
+  auth.signOut();
+};
+
+const handleDeleteAccount = async () => {
+  const isConfirmed = window.confirm('Are you sure you want to delete your account? This action cannot be undone.');
+  
+  if (isConfirmed) {
+    try {
+      // Delete user data from the database
+      const userRef = ref(database, `users/${user.uid}`);
+      await set(userRef, null);
+
+      // Delete user's messages
+      const messagesQuery = query(ref(database, 'private_messages'));
+      const snapshot = await get(messagesQuery);
+      if (snapshot.exists()) {
+        const updates = {};
+        snapshot.forEach((chatSnapshot) => {
+          const chatId = chatSnapshot.key;
+          if (chatId.includes(user.uid)) {
+            updates[`private_messages/${chatId}`] = null;
+          }
+        });
+        if (Object.keys(updates).length > 0) {
+          await update(ref(database), updates);
+        }
+      }
+
+      // Delete user's authentication account
+      await user.delete();
+
+      toast({
+        title: 'Account Deleted',
+        description: 'Your account has been successfully deleted',
+        status: 'success',
+        duration: 5000,
+        isClosable: true
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to delete account: ' + error.message,
+        status: 'error',
+        duration: 5000,
+        isClosable: true
+      });
+    }
+  }
+};
+
+const ViewUserProfileModal = ({ isOpen, onClose, user }) => {
+  if (!user) return null;
+  
+  return (
+    <Modal isOpen={isOpen} onClose={onClose}>
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>User Profile</ModalHeader>
+        <ModalCloseButton />
+        <ModalBody>
+          <VStack spacing={4} align="center">
+            <Avatar
+              size="2xl"
+              src={user.photoURL}
+              name={user.displayName}
+            />
+            <Text fontSize="xl" fontWeight="bold">
+              {user.displayName}
+            </Text>
+            <Text color="gray.600">
+              {user.description || 'No description available'}
+            </Text>
+            <Text fontSize="sm" color="gray.500">
+              Last seen: {formatLastSeen(user.lastSeen)}
+            </Text>
+          </VStack>
+        </ModalBody>
+        <ModalFooter>
+          <Button colorScheme="blue" onClick={onClose}>
+            Close
+          </Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
+  );
+};
+
   const toast = useToast();
 
   useEffect(() => {
@@ -36,7 +253,8 @@ const Chat = ({ user }) => {
       online: true,
       lastSeen: serverTimestamp(),
       displayName: user.displayName,
-      photoURL: user.photoURL
+      photoURL: user.photoURL,
+      description: users[user.uid]?.description || ''
     });
 
     // Update last seen on disconnect
@@ -48,6 +266,10 @@ const Chat = ({ user }) => {
     onValue(usersRef, (snapshot) => {
       if (snapshot.exists()) {
         setUsers(snapshot.val());
+        // Update description state when users data changes
+        if (snapshot.val()[user.uid]?.description) {
+          setNewDescription(snapshot.val()[user.uid].description);
+        }
       }
     });
 
@@ -516,6 +738,14 @@ const Chat = ({ user }) => {
         displayName: newDisplayName
       });
 
+      // Update description in Firebase
+      const userRef = ref(database, `users/${user.uid}`);
+      await set(userRef, {
+        ...users[user.uid],
+        displayName: newDisplayName,
+        description: newDescription
+      });
+
       toast({
         title: 'Success',
         description: 'Profile updated successfully',
@@ -556,318 +786,375 @@ const Chat = ({ user }) => {
   };
 
   return (
-    <Box>
-      <Box h="100vh" bg="gray.50">
-        <HStack spacing={0} h="full">
-          {/* Users List */}
-          <Box w="300px" h="full" bg="white" borderRightWidth={1} borderColor="gray.200">
-            {!selectedUser && (
-              <Box
-                position="absolute"
-                right="0"
-                top="0"
-                w="calc(100vw - 300px)"
-                h="100vh"
-                bgImage="/ChatApp/Home.png"
-                bgSize="cover"
-                bgPosition="center"
-                zIndex="1"
-              />
-            )}
-            <VStack h="full" spacing={0}>
-              <HStack w="full" p={4} borderBottomWidth={1} borderColor="gray.200" justify="space-between">
-                <HStack>
-                  <Avatar size="sm" src={user.photoURL} name={user.displayName} />
-                  <Text fontWeight="bold">{user.displayName}</Text>
-                </HStack>
-                <IconButton
-                  icon={<FaCog />}
-                  variant="ghost"
-                  onClick={onOpen}
-                  aria-label="Settings"
+    <Box h="100vh" bg="gray.50">
+      <HStack h="full" spacing={0}>
+        {/* User List */}
+        <Box w="300px" h="full" bg="white" borderRight="1px" borderColor="gray.200" overflowY="auto">
+          <VStack p={4} spacing={4} align="stretch">
+            <HStack justify="space-between">
+              <HStack spacing={2}>
+                <Avatar
+                  size="sm"
+                  src={user.photoURL}
+                  name={user.displayName}
+                  cursor="pointer"
+                  onClick={() => handleProfileClick(user.uid)}
                 />
+                <Text fontWeight="bold">{user.displayName}</Text>
               </HStack>
-              <Box w="full" p={4} borderBottomWidth={1} borderColor="gray.200" position="relative">
-                <HStack justify="space-between" align="center">
-                  <Text fontSize="2xl" fontWeight="bold">Chats</Text>
-                  <IconButton
-                    icon={<FaPlus />}
-                    colorScheme="blue"
-                    variant="solid"
-                    size="sm"
-                    borderRadius="full"
-                    aria-label="New message"
-                    onClick={() => {
-                      const availableUsers = Object.entries(users)
-                        .filter(([id]) => id !== user.uid && !messages.some(msg => msg.sender === id || msg.receiver === id))
-                        .map(([id, userData]) => ({
-                          id,
-                          ...userData
-                        }));
-
-                      if (availableUsers.length > 0) {
-                        setSelectedUser(availableUsers[0].id);
-                        toast({
-                          title: 'New Chat',
-                          description: `Start chatting with ${availableUsers[0].displayName}`,
-                          status: 'info',
-                          duration: 3000,
-                          isClosable: true
-                        });
-                      } else {
-                        toast({
-                          title: 'No New Users',
-                          description: 'You are already connected with all available users',
-                          status: 'info',
-                          duration: 3000,
-                          isClosable: true
-                        });
-                      }
-                    }}
-                  />
-                </HStack>
-              </Box>
-              <List spacing={0} w="full" overflowY="auto" flex={1}>
-                {Object.entries(users)
-                  .filter(([id]) => id !== user.uid)
-                  .map(([id, userData]) => (
-                    <ListItem
-                      key={id}
-                      onClick={() => setSelectedUser(id)}
-                      cursor="pointer"
-                      p={4}
-                      bg={selectedUser === id ? 'blue.50' : unreadMessages[id] ? 'green.50' : 'white'}
-                      borderBottomWidth={1}
-                      borderColor="gray.100"
-                      _hover={{ bg: 'gray.50' }}
-                    >
-                      <HStack spacing={3}>
-                        <Box position="relative">
-                          <Avatar size="md" name={userData.displayName} src={userData.photoURL} />
-                          {userData.online && (
-                            <Box
-                              position="absolute"
-                              bottom={0}
-                              right={0}
-                              w={3}
-                              h={3}
-                              bg="green.400"
-                              borderRadius="full"
-                              borderWidth={2}
-                              borderColor="white"
-                            />
-                          )}
-                        </Box>
-                        <VStack align="start" spacing={1} flex={1}>
-                          <Text fontWeight="semibold">{userData.displayName}</Text>
-                          <Text fontSize="sm" color="gray.500">
-                            {userData.online ? 'Active now' : `Last seen: ${formatLastSeen(userData.lastSeen)}`}
-                          </Text>
-                        </VStack>
-                      </HStack>
-                    </ListItem>
-                  ))}
-              </List>
-            </VStack>
-          </Box>
-
-          {/* Chat Area */}
-          <VStack flex={1} h="full" bg="white" spacing={0}>
-            {selectedUser ? (
-              <>
-                <Box w="full" p={4} bg="white" borderBottomWidth={1} borderColor="gray.200">
-                  <HStack justify="space-between" align="center">
-                    <HStack spacing={3}>
-                      <Avatar size="sm" name={users[selectedUser]?.displayName} src={users[selectedUser]?.photoURL} />
+              <IconButton
+                icon={<FaCog />}
+                variant="ghost"
+                onClick={onOpen}
+                aria-label="Settings"
+              />
+            </HStack>
+            <List spacing={2}>
+              {Object.entries(users)
+                .filter(([id]) => id !== user.uid)
+                .map(([id, userData]) => (
+                  <ListItem
+                    key={id}
+                    onClick={() => handleUserClick(id)}
+                    bg={selectedUser === id ? 'gray.100' : 'transparent'}
+                    p={2}
+                    borderRadius="md"
+                    cursor="pointer"
+                    _hover={{ bg: 'gray.100' }}
+                  >
+                    <HStack spacing={3} position="relative">
+                      <Avatar
+                        size="sm"
+                        src={userData.photoURL}
+                        name={userData.displayName}
+                      />
                       <VStack align="start" spacing={0}>
-                        <Text fontWeight="semibold">{users[selectedUser]?.displayName}</Text>
+                        <Text fontWeight="medium">{userData.displayName}</Text>
                         <Text fontSize="sm" color="gray.500">
-                          {users[selectedUser]?.online ? 'Active now' : `Last seen: ${formatLastSeen(users[selectedUser]?.lastSeen)}`}
+                          {userData.online ? 'Online' : `Last seen: ${formatLastSeen(userData.lastSeen)}`}
                         </Text>
                       </VStack>
+                      {unreadMessages[id] > 0 && (
+                        <Box
+                          position="absolute"
+                          right={2}
+                          bg="blue.500"
+                          color="white"
+                          borderRadius="full"
+                          px={2}
+                          py={1}
+                          fontSize="xs"
+                        >
+                          {unreadMessages[id]}
+                        </Box>
+                      )}
                     </HStack>
-                    <HStack spacing={2}>
-                      <IconButton
-                        icon={<FaVideo />}
-                        onClick={() => startCall(selectedUser)}
-                        aria-label="Start video call"
-                        variant="ghost"
-                        colorScheme="blue"
-                        size="lg"
-                      />
-                    </HStack>
-                  </HStack>
-                </Box>
-                <VStack flex={1} w="full" spacing={4} p={4} overflowY="auto">
-                  {messages.map((message) => (
-                    <Box
-                      key={message.id}
-                      alignSelf={message.sender === user.uid ? 'flex-end' : 'flex-start'}
-                      maxW="70%"
-                    >
-                      <Box
-                        bg={message.sender === user.uid ? 'blue.500' : 'gray.100'}
-                        color={message.sender === user.uid ? 'white' : 'black'}
-                        px={4}
-                        py={2}
-                        borderRadius="lg"
-                      >
-                        {message.fileUrl ? (
-                          message.fileType === 'image' ? (
-                            <img src={message.fileUrl} alt="Shared" style={{ maxWidth: '100%', borderRadius: '8px' }} />
-                          ) : (
-                            <a href={message.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-                              View Attachment
-                            </a>
-                          )
-                        ) : (
-                          <Text>{message.text}</Text>
-                        )}
-                      </Box>
-                      <Text fontSize="xs" color="gray.500" mt={1}>
-                        {new Date(message.timestamp).toLocaleTimeString()}
-                      </Text>
-                    </Box>
-                  ))}
+                  </ListItem>
+                ))}
+            </List>
+          </VStack>
+        </Box>
+
+        {/* Chat Area */}
+        <VStack flex={1} h="full" spacing={0}>
+          {selectedUser ? (
+            <>
+              {/* Chat Header */}
+              <HStack
+                w="full"
+                p={4}
+                bg="white"
+                borderBottom="1px"
+                borderColor="gray.200"
+                spacing={4}
+              >
+                <Avatar
+                  size="sm"
+                  src={users[selectedUser]?.photoURL}
+                  name={users[selectedUser]?.displayName}
+                  cursor="pointer"
+                  onClick={() => handleProfileClick(selectedUser)}
+                />
+                <VStack align="start" spacing={0} flex={1}>
+                  <Text fontWeight="bold">{users[selectedUser]?.displayName}</Text>
+                  <Text fontSize="sm" color="gray.500">
+                    {users[selectedUser]?.online ? 'Online' : `Last seen: ${formatLastSeen(users[selectedUser]?.lastSeen)}`}
+                  </Text>
                 </VStack>
-                <HStack w="full" p={4} borderTopWidth={1} borderColor="gray.200">
-                  <Input
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    placeholder="Type a message..."
-                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                <HStack spacing={2}>
+                  <IconButton
+                    icon={<FaPhone />}
+                    variant="ghost"
+                    onClick={() => startCall(selectedUser)}
+                    aria-label="Voice call"
                   />
                   <IconButton
-                    icon={<FaPaperclip />}
-                    onClick={() => fileInputRef.current?.click()}
-                    aria-label="Attach file"
+                    icon={<FaVideo />}
+                    variant="ghost"
+                    onClick={() => startCall(selectedUser)}
+                    aria-label="Video call"
                   />
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    style={{ display: 'none' }}
-                    onChange={handleFileUpload}
-                  />
-                  <Button colorScheme="blue" onClick={() => sendMessage()}>
-                    Send
-                  </Button>
                 </HStack>
-              </>
-            ) : (
-              <Center flex={1}>
-                <Box maxW="600px" w="full">
-                  <img src="/ChatApp/Home.png" alt="Welcome" style={{ width: '100%', height: 'auto' }} />
-                </Box>
-              </Center>
-            )}
-          </VStack>
+              </HStack>
 
-          {/* Video Call Area */}
-          {(calling || receiving) && (
-            <Box w="300px" h="full" bg="white" borderLeftWidth={1} borderColor="gray.200">
-              <VStack h="full" spacing={4} p={4}>
-                <Text fontSize="lg" fontWeight="semibold">Video Call</Text>
-                <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
+              {/* Messages Area */}
+              <Box flex={1} w="full" overflowY="auto" p={4} bg="gray.50">
+                <VStack spacing={4} align="stretch">
+                  {messages.map((message) => {
+                    const isOwnMessage = message.sender === user.uid;
+                    return (
+                      <HStack
+                        key={message.id}
+                        justify={isOwnMessage ? 'flex-end' : 'flex-start'}
+                        align="flex-start"
+                        spacing={2}
+                      >
+                        {!isOwnMessage && (
+                          <Avatar
+                            size="sm"
+                            src={users[message.sender]?.photoURL}
+                            name={users[message.sender]?.displayName}
+                          />
+                        )}
+                        <VStack
+                          maxW="70%"
+                          align={isOwnMessage ? 'end' : 'start'}
+                          spacing={1}
+                        >
+                          <Box
+                            bg={isOwnMessage ? 'blue.500' : 'white'}
+                            color={isOwnMessage ? 'white' : 'black'}
+                            px={4}
+                            py={2}
+                            borderRadius="2xl"
+                            boxShadow="sm"
+                          >
+                            {message.fileUrl ? (
+                              message.fileType === 'image' ? (
+                                <Image
+                                  src={message.fileUrl}
+                                  maxH="200px"
+                                  borderRadius="md"
+                                  alt="Shared image"
+                                />
+                              ) : (
+                                <Link href={message.fileUrl} isExternal color={isOwnMessage ? 'white' : 'blue.500'}>
+                                  📎 Attachment
+                                </Link>
+                              )
+                            ) : (
+                              <Text>{message.text}</Text>
+                            )}
+                          </Box>
+                          <Text fontSize="xs" color="gray.500">
+                            {new Date(message.timestamp).toLocaleTimeString()}
+                          </Text>
+                        </VStack>
+                        {isOwnMessage && (
+                          <Avatar
+                            size="sm"
+                            src={user.photoURL}
+                            name={user.displayName}
+                          />
+                        )}
+                      </HStack>
+                    );
+                  })}
+                </VStack>
+              </Box>
+
+              {/* Input Area */}
+              <HStack
+                w="full"
+                p={4}
+                bg="white"
+                borderTop="1px"
+                borderColor="gray.200"
+                spacing={4}
+              >
+                <IconButton
+                  icon={<FaPaperclip />}
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach file"
+                />
+                <Input
+                  flex={1}
+                  placeholder="Type a message..."
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                  bg="gray.50"
+                  borderRadius="full"
+                />
+                <Button
+                  colorScheme="blue"
+                  onClick={() => sendMessage()}
+                  isDisabled={!newMessage.trim()}
+                  borderRadius="full"
+                >
+                  Send
+                </Button>
+              </HStack>
+            </>
+          ) : (
+            <Center flex={1}>
+              <Text color="gray.500">Select a user to start chatting</Text>
+            </Center>
+          )}
+        </VStack>
+
+        {/* Video Call Area */}
+        {(calling || receiving) && (
+          <Box
+            position="fixed"
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            bg="rgba(0, 0, 0, 0.8)"
+            zIndex={1000}
+            p={4}
+          >
+            <VStack h="full" justify="center" spacing={4}>
+              <HStack spacing={4} justify="center">
+                <Box w="320px" h="240px" bg="black" borderRadius="md" overflow="hidden">
                   <video
                     ref={localVideoRef}
                     autoPlay
+                    playsInline
                     muted
-                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 </Box>
-                <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
+                <Box w="320px" h="240px" bg="black" borderRadius="md" overflow="hidden">
                   <video
                     ref={remoteVideoRef}
                     autoPlay
-                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                    playsInline
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                 </Box>
-                <HStack spacing={4} justify="center">
-                  <IconButton
-                    icon={audioEnabled ? <FaMicrophone /> : <FaMicrophoneSlash />}
-                    onClick={toggleAudio}
-                    aria-label="Toggle audio"
-                    colorScheme={audioEnabled ? 'blue' : 'red'}
-                    variant="solid"
-                    size="lg"
-                    isRound
-                  />
-                  <IconButton
-                    icon={videoEnabled ? <FaVideo /> : <FaVideoSlash />}
-                    onClick={toggleVideo}
-                    aria-label="Toggle video"
-                    colorScheme={videoEnabled ? 'blue' : 'red'}
-                    variant="solid"
-                    size="lg"
-                    isRound
-                  />
-                  <IconButton
-                    colorScheme="red"
-                    onClick={endCall}
-                    aria-label="End call"
-                    icon={<FaPhone style={{ transform: 'rotate(135deg)' }} />}
-                    variant="solid"
-                    size="lg"
-                    isRound
-                  />
-                </HStack>
-              </VStack>
-            </Box>
-          )}
-        </HStack>
-      </Box>
+              </HStack>
+              <HStack spacing={4}>
+                <IconButton
+                  icon={audioEnabled ? <FaMicrophone /> : <FaMicrophoneSlash />}
+                  onClick={() => {
+                    if (stream) {
+                      const audioTrack = stream.getAudioTracks()[0];
+                      if (audioTrack) {
+                        audioTrack.enabled = !audioEnabled;
+                        setAudioEnabled(!audioEnabled);
+                      }
+                    }
+                  }}
+                  colorScheme={audioEnabled ? 'blue' : 'red'}
+                  rounded="full"
+                  aria-label="Toggle audio"
+                />
+                <IconButton
+                  icon={videoEnabled ? <FaVideo /> : <FaVideoSlash />}
+                  onClick={() => {
+                    if (stream) {
+                      const videoTrack = stream.getVideoTracks()[0];
+                      if (videoTrack) {
+                        videoTrack.enabled = !videoEnabled;
+                        setVideoEnabled(!videoEnabled);
+                      }
+                    }
+                  }}
+                  colorScheme={videoEnabled ? 'blue' : 'red'}
+                  rounded="full"
+                  aria-label="Toggle video"
+                />
+                <IconButton
+                  icon={<FaPhone />}
+                  onClick={endCall}
+                  colorScheme="red"
+                  rounded="full"
+                  transform="rotate(135deg)"
+                  aria-label="End call"
+                />
+              </HStack>
+            </VStack>
+          </Box>
+        )}
+      </HStack>
 
+      {/* Settings Modal */}
       <Modal isOpen={isOpen} onClose={onClose}>
         <ModalOverlay />
         <ModalContent>
-          <ModalHeader>Settings</ModalHeader>
+          <ModalHeader>Profile Settings</ModalHeader>
           <ModalCloseButton />
           <ModalBody>
             <VStack spacing={4}>
-              <HStack w="full">
-                <Avatar size="xl" src={user.photoURL} name={user.displayName} />
-                <VStack align="start" spacing={1}>
-                  <Text fontSize="sm" color="gray.500">Profile Picture</Text>
-                  <Button
-                    leftIcon={<FaPlus />}
-                    colorScheme="blue"
-                    onClick={() => photoInputRef.current.click()}
-                  >
-                    Change Photo
-                  </Button>
-                </VStack>
-              </HStack>
-              <VStack w="full" align="start" spacing={1}>
-                <Text fontSize="sm" color="gray.500">Display Name</Text>
-                <Input
-                  value={newDisplayName}
-                  onChange={(e) => setNewDisplayName(e.target.value)}
-                  placeholder="Enter new display name"
+              <Box position="relative">
+                <Avatar
+                  size="2xl"
+                  src={user.photoURL}
+                  name={user.displayName}
                 />
-              </VStack>
+                <IconButton
+                  aria-label="Change profile picture"
+                  icon={<FaPlus />}
+                  size="sm"
+                  colorScheme="blue"
+                  position="absolute"
+                  bottom="0"
+                  right="0"
+                  rounded="full"
+                  onClick={() => photoInputRef.current?.click()}
+                />
+                <Input
+                  type="file"
+                  accept="image/*"
+                  hidden
+                  ref={photoInputRef}
+                  onChange={handleProfilePictureChange}
+                />
+              </Box>
+              <Input
+                placeholder="Display Name"
+                value={newDisplayName}
+                onChange={(e) => setNewDisplayName(e.target.value)}
+              />
+              <Input
+                placeholder="Description"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+              />
             </VStack>
           </ModalBody>
           <ModalFooter>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handlePhotoChange}
-              ref={photoInputRef}
-              style={{ display: 'none' }}
-            />
-            <Button variant="ghost" mr={3} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              colorScheme="blue"
-              onClick={updateDisplayName}
-              isLoading={false}
-            >
-              Save Changes
-            </Button>
+            <VStack spacing={4} width="100%">
+              <Button colorScheme="blue" onClick={handleSaveProfile} width="100%">
+                Save Changes
+              </Button>
+              <Button colorScheme="gray" onClick={handleSignOut} width="100%">
+                Sign Out
+              </Button>
+              <Button colorScheme="red" onClick={handleDeleteAccount} width="100%">
+                Delete Account
+              </Button>
+            </VStack>
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      {/* View User Profile Modal */}
+      <ViewUserProfileModal
+        isOpen={isUserProfileOpen}
+        onClose={onUserProfileClose}
+        user={viewingUser}
+      />
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleFileUpload}
+      />
     </Box>
   );
 };
