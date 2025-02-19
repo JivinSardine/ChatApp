@@ -1,13 +1,16 @@
 import { useEffect, useState, useRef } from 'react';
-import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem } from '@chakra-ui/react';
+import { Box, VStack, HStack, Input, Button, Text, Avatar, IconButton, useToast, List, ListItem, Center, Modal, ModalOverlay, ModalContent, ModalHeader, ModalFooter, ModalBody, ModalCloseButton, useDisclosure } from '@chakra-ui/react';
 import CryptoJS from 'crypto-js';
 import { ref, onValue, push, set, serverTimestamp, query, orderByChild, equalTo } from 'firebase/database';
-import { FaVideo, FaPhone, FaMicrophone, FaMicrophoneSlash, FaVideoSlash, FaPaperclip, FaPlus } from 'react-icons/fa';
+import { FaVideo, FaPhone, FaMicrophone, FaMicrophoneSlash, FaVideoSlash, FaPaperclip, FaPlus, FaCog } from 'react-icons/fa';
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { updateProfile } from 'firebase/auth';
 import Peer from 'simple-peer';
-import { database } from '../App';
+import { database, auth } from '../App';
 
 const Chat = ({ user }) => {
+  const { isOpen, onOpen, onClose } = useDisclosure();
+  const [newDisplayName, setNewDisplayName] = useState(user.displayName);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [users, setUsers] = useState({});
@@ -19,6 +22,7 @@ const Chat = ({ user }) => {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [unreadMessages, setUnreadMessages] = useState({});
   const fileInputRef = useRef();
+  const photoInputRef = useRef();
   
   const peerRef = useRef();
   const localVideoRef = useRef();
@@ -459,6 +463,78 @@ const Chat = ({ user }) => {
     }
   };
 
+  const handlePhotoChange = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const CLOUDINARY_CLOUD_NAME = 'dh77mjbpt';
+    const UPLOAD_PRESET = 'ml_default';
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', UPLOAD_PRESET);
+
+    try {
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`,
+        {
+          method: 'POST',
+          body: formData
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Upload failed');
+      }
+
+      const data = await response.json();
+      await updateProfile(auth.currentUser, {
+        photoURL: data.secure_url
+      });
+
+      toast({
+        title: 'Success',
+        description: 'Profile photo updated successfully',
+        status: 'success',
+        duration: 3000,
+        isClosable: true
+      });
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to update profile photo',
+        status: 'error',
+        duration: 5000,
+        isClosable: true
+      });
+    }
+  };
+
+  const updateDisplayName = async () => {
+    try {
+      await updateProfile(auth.currentUser, {
+        displayName: newDisplayName
+      });
+
+      toast({
+        title: 'Success',
+        description: 'Profile updated successfully',
+        status: 'success',
+        duration: 3000,
+        isClosable: true
+      });
+      onClose();
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: error.message,
+        status: 'error',
+        duration: 3000,
+        isClosable: true
+      });
+    }
+  };
+
   const endCall = () => {
     if (peerRef.current) {
       peerRef.current.destroy();
@@ -480,186 +556,318 @@ const Chat = ({ user }) => {
   };
 
   return (
-    <Box h="100vh" bg="gray.50">
-      <HStack spacing={0} h="full">
-        {/* Users List */}
-        <Box w="300px" h="full" bg="white" borderRightWidth={1} borderColor="gray.200">
-          <VStack h="full" spacing={0}>
-            <Box w="full" p={4} borderBottomWidth={1} borderColor="gray.200" position="relative">
-              <HStack justify="space-between" align="center">
-                <Text fontSize="2xl" fontWeight="bold">Chats</Text>
+    <Box>
+      <Box h="100vh" bg="gray.50">
+        <HStack spacing={0} h="full">
+          {/* Users List */}
+          <Box w="300px" h="full" bg="white" borderRightWidth={1} borderColor="gray.200">
+            {!selectedUser && (
+              <Box
+                position="absolute"
+                right="0"
+                top="0"
+                w="calc(100vw - 300px)"
+                h="100vh"
+                bgImage="/ChatApp/Home.png"
+                bgSize="cover"
+                bgPosition="center"
+                zIndex="1"
+              />
+            )}
+            <VStack h="full" spacing={0}>
+              <HStack w="full" p={4} borderBottomWidth={1} borderColor="gray.200" justify="space-between">
+                <HStack>
+                  <Avatar size="sm" src={user.photoURL} name={user.displayName} />
+                  <Text fontWeight="bold">{user.displayName}</Text>
+                </HStack>
                 <IconButton
-                  icon={<FaPlus />}
-                  colorScheme="blue"
-                  variant="solid"
-                  size="sm"
-                  borderRadius="full"
-                  aria-label="New message"
-                  onClick={() => {
-                    const availableUsers = Object.entries(users)
-                      .filter(([id]) => id !== user.uid && !messages.some(msg => msg.sender === id || msg.receiver === id))
-                      .map(([id, userData]) => ({
-                        id,
-                        ...userData
-                      }));
-
-                    if (availableUsers.length > 0) {
-                      setSelectedUser(availableUsers[0].id);
-                      toast({
-                        title: 'New Chat',
-                        description: `Start chatting with ${availableUsers[0].displayName}`,
-                        status: 'info',
-                        duration: 3000,
-                        isClosable: true
-                      });
-                    } else {
-                      toast({
-                        title: 'No New Users',
-                        description: 'You are already connected with all available users',
-                        status: 'info',
-                        duration: 3000,
-                        isClosable: true
-                      });
-                    }
-                  }}
+                  icon={<FaCog />}
+                  variant="ghost"
+                  onClick={onOpen}
+                  aria-label="Settings"
                 />
               </HStack>
-            </Box>
-            <List spacing={0} w="full" overflowY="auto" flex={1}>
-              {Object.entries(users)
-                .filter(([id]) => id !== user.uid)
-                .map(([id, userData]) => (
-                  <ListItem
-                    key={id}
-                    onClick={() => setSelectedUser(id)}
-                    cursor="pointer"
-                    p={4}
-                    bg={selectedUser === id ? 'blue.50' : unreadMessages[id] ? 'green.50' : 'white'}
-                    borderBottomWidth={1}
-                    borderColor="gray.100"
-                    _hover={{ bg: 'gray.50' }}
-                  >
+              <Box w="full" p={4} borderBottomWidth={1} borderColor="gray.200" position="relative">
+                <HStack justify="space-between" align="center">
+                  <Text fontSize="2xl" fontWeight="bold">Chats</Text>
+                  <IconButton
+                    icon={<FaPlus />}
+                    colorScheme="blue"
+                    variant="solid"
+                    size="sm"
+                    borderRadius="full"
+                    aria-label="New message"
+                    onClick={() => {
+                      const availableUsers = Object.entries(users)
+                        .filter(([id]) => id !== user.uid && !messages.some(msg => msg.sender === id || msg.receiver === id))
+                        .map(([id, userData]) => ({
+                          id,
+                          ...userData
+                        }));
+
+                      if (availableUsers.length > 0) {
+                        setSelectedUser(availableUsers[0].id);
+                        toast({
+                          title: 'New Chat',
+                          description: `Start chatting with ${availableUsers[0].displayName}`,
+                          status: 'info',
+                          duration: 3000,
+                          isClosable: true
+                        });
+                      } else {
+                        toast({
+                          title: 'No New Users',
+                          description: 'You are already connected with all available users',
+                          status: 'info',
+                          duration: 3000,
+                          isClosable: true
+                        });
+                      }
+                    }}
+                  />
+                </HStack>
+              </Box>
+              <List spacing={0} w="full" overflowY="auto" flex={1}>
+                {Object.entries(users)
+                  .filter(([id]) => id !== user.uid)
+                  .map(([id, userData]) => (
+                    <ListItem
+                      key={id}
+                      onClick={() => setSelectedUser(id)}
+                      cursor="pointer"
+                      p={4}
+                      bg={selectedUser === id ? 'blue.50' : unreadMessages[id] ? 'green.50' : 'white'}
+                      borderBottomWidth={1}
+                      borderColor="gray.100"
+                      _hover={{ bg: 'gray.50' }}
+                    >
+                      <HStack spacing={3}>
+                        <Box position="relative">
+                          <Avatar size="md" name={userData.displayName} src={userData.photoURL} />
+                          {userData.online && (
+                            <Box
+                              position="absolute"
+                              bottom={0}
+                              right={0}
+                              w={3}
+                              h={3}
+                              bg="green.400"
+                              borderRadius="full"
+                              borderWidth={2}
+                              borderColor="white"
+                            />
+                          )}
+                        </Box>
+                        <VStack align="start" spacing={1} flex={1}>
+                          <Text fontWeight="semibold">{userData.displayName}</Text>
+                          <Text fontSize="sm" color="gray.500">
+                            {userData.online ? 'Active now' : `Last seen: ${formatLastSeen(userData.lastSeen)}`}
+                          </Text>
+                        </VStack>
+                      </HStack>
+                    </ListItem>
+                  ))}
+              </List>
+            </VStack>
+          </Box>
+
+          {/* Chat Area */}
+          <VStack flex={1} h="full" bg="white" spacing={0}>
+            {selectedUser ? (
+              <>
+                <Box w="full" p={4} bg="white" borderBottomWidth={1} borderColor="gray.200">
+                  <HStack justify="space-between" align="center">
                     <HStack spacing={3}>
-                      <Box position="relative">
-                        <Avatar size="md" name={userData.displayName} src={userData.photoURL} />
-                        {userData.online && (
-                          <Box
-                            position="absolute"
-                            bottom={0}
-                            right={0}
-                            w={3}
-                            h={3}
-                            bg="green.400"
-                            borderRadius="full"
-                            borderWidth={2}
-                            borderColor="white"
-                          />
-                        )}
-                      </Box>
-                      <VStack align="start" spacing={1} flex={1}>
-                        <Text fontWeight="semibold">{userData.displayName}</Text>
+                      <Avatar size="sm" name={users[selectedUser]?.displayName} src={users[selectedUser]?.photoURL} />
+                      <VStack align="start" spacing={0}>
+                        <Text fontWeight="semibold">{users[selectedUser]?.displayName}</Text>
                         <Text fontSize="sm" color="gray.500">
-                          {userData.online ? 'Active now' : `Last seen: ${formatLastSeen(userData.lastSeen)}`}
+                          {users[selectedUser]?.online ? 'Active now' : `Last seen: ${formatLastSeen(users[selectedUser]?.lastSeen)}`}
                         </Text>
                       </VStack>
                     </HStack>
-                  </ListItem>
-                ))}
-            </List>
-          </VStack>
-        </Box>
-
-        {/* Chat Area */}
-        <VStack flex={1} h="full" bg="white" spacing={0}>
-          {selectedUser ? (
-            <>
-              <Box w="full" p={4} bg="white" borderBottomWidth={1} borderColor="gray.200">
-                <HStack justify="space-between" align="center">
-                  <HStack spacing={3}>
-                    <Avatar size="sm" name={users[selectedUser]?.displayName} src={users[selectedUser]?.photoURL} />
-                    <VStack align="start" spacing={0}>
-                      <Text fontWeight="semibold">{users[selectedUser]?.displayName}</Text>
-                      <Text fontSize="sm" color="gray.500">
-                        {users[selectedUser]?.online ? 'Active now' : `Last seen: ${formatLastSeen(users[selectedUser]?.lastSeen)}`}
+                    <HStack spacing={2}>
+                      <IconButton
+                        icon={<FaVideo />}
+                        onClick={() => startCall(selectedUser)}
+                        aria-label="Start video call"
+                        variant="ghost"
+                        colorScheme="blue"
+                        size="lg"
+                      />
+                    </HStack>
+                  </HStack>
+                </Box>
+                <VStack flex={1} w="full" spacing={4} p={4} overflowY="auto">
+                  {messages.map((message) => (
+                    <Box
+                      key={message.id}
+                      alignSelf={message.sender === user.uid ? 'flex-end' : 'flex-start'}
+                      maxW="70%"
+                    >
+                      <Box
+                        bg={message.sender === user.uid ? 'blue.500' : 'gray.100'}
+                        color={message.sender === user.uid ? 'white' : 'black'}
+                        px={4}
+                        py={2}
+                        borderRadius="lg"
+                      >
+                        {message.fileUrl ? (
+                          message.fileType === 'image' ? (
+                            <img src={message.fileUrl} alt="Shared" style={{ maxWidth: '100%', borderRadius: '8px' }} />
+                          ) : (
+                            <a href={message.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
+                              View Attachment
+                            </a>
+                          )
+                        ) : (
+                          <Text>{message.text}</Text>
+                        )}
+                      </Box>
+                      <Text fontSize="xs" color="gray.500" mt={1}>
+                        {new Date(message.timestamp).toLocaleTimeString()}
                       </Text>
-                    </VStack>
-                  </HStack>
-                  <HStack spacing={2}>
-                    <IconButton
-                      icon={<FaVideo />}
-                      onClick={() => startCall(selectedUser)}
-                      aria-label="Start video call"
-                      variant="ghost"
-                      colorScheme="blue"
-                      size="lg"
-                    />
-                  </HStack>
+                    </Box>
+                  ))}
+                </VStack>
+                <HStack w="full" p={4} borderTopWidth={1} borderColor="gray.200">
+                  <Input
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    placeholder="Type a message..."
+                    onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                  />
+                  <IconButton
+                    icon={<FaPaperclip />}
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="Attach file"
+                  />
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    onChange={handleFileUpload}
+                  />
+                  <Button colorScheme="blue" onClick={() => sendMessage()}>
+                    Send
+                  </Button>
                 </HStack>
-              </Box>
-              {/* Rest of the chat content */}
-            </>
-          ) : (
-            <Center flex={1}>
-              <Box maxW="600px" w="full">
-                <img src="/ChatApp/Home.png" alt="Welcome" style={{ width: '100%', height: 'auto' }} />
-              </Box>
-            </Center>
-          )}
-        </VStack>
+              </>
+            ) : (
+              <Center flex={1}>
+                <Box maxW="600px" w="full">
+                  <img src="/ChatApp/Home.png" alt="Welcome" style={{ width: '100%', height: 'auto' }} />
+                </Box>
+              </Center>
+            )}
+          </VStack>
 
-        {/* Video Call Area */}
-        {(calling || receiving) && (
-          <Box w="300px" h="full" bg="white" borderLeftWidth={1} borderColor="gray.200">
-            <VStack h="full" spacing={4} p={4}>
-              <Text fontSize="lg" fontWeight="semibold">Video Call</Text>
-              <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
-                />
-              </Box>
-              <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
-                />
-              </Box>
-              <HStack spacing={4} justify="center">
-                <IconButton
-                  icon={audioEnabled ? <FaMicrophone /> : <FaMicrophoneSlash />}
-                  onClick={toggleAudio}
-                  aria-label="Toggle audio"
-                  colorScheme={audioEnabled ? 'blue' : 'red'}
-                  variant="solid"
-                  size="lg"
-                  isRound
-                />
-                <IconButton
-                  icon={videoEnabled ? <FaVideo /> : <FaVideoSlash />}
-                  onClick={toggleVideo}
-                  aria-label="Toggle video"
-                  colorScheme={videoEnabled ? 'blue' : 'red'}
-                  variant="solid"
-                  size="lg"
-                  isRound
-                />
-                <IconButton
-                  colorScheme="red"
-                  onClick={endCall}
-                  aria-label="End call"
-                  icon={<FaPhone style={{ transform: 'rotate(135deg)' }} />}
-                  variant="solid"
-                  size="lg"
-                  isRound
-                />
+          {/* Video Call Area */}
+          {(calling || receiving) && (
+            <Box w="300px" h="full" bg="white" borderLeftWidth={1} borderColor="gray.200">
+              <VStack h="full" spacing={4} p={4}>
+                <Text fontSize="lg" fontWeight="semibold">Video Call</Text>
+                <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    muted
+                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                  />
+                </Box>
+                <Box w="full" position="relative" bg="gray.900" borderRadius="lg" overflow="hidden">
+                  <video
+                    ref={remoteVideoRef}
+                    autoPlay
+                    style={{ width: '100%', aspectRatio: '16/9', objectFit: 'cover' }}
+                  />
+                </Box>
+                <HStack spacing={4} justify="center">
+                  <IconButton
+                    icon={audioEnabled ? <FaMicrophone /> : <FaMicrophoneSlash />}
+                    onClick={toggleAudio}
+                    aria-label="Toggle audio"
+                    colorScheme={audioEnabled ? 'blue' : 'red'}
+                    variant="solid"
+                    size="lg"
+                    isRound
+                  />
+                  <IconButton
+                    icon={videoEnabled ? <FaVideo /> : <FaVideoSlash />}
+                    onClick={toggleVideo}
+                    aria-label="Toggle video"
+                    colorScheme={videoEnabled ? 'blue' : 'red'}
+                    variant="solid"
+                    size="lg"
+                    isRound
+                  />
+                  <IconButton
+                    colorScheme="red"
+                    onClick={endCall}
+                    aria-label="End call"
+                    icon={<FaPhone style={{ transform: 'rotate(135deg)' }} />}
+                    variant="solid"
+                    size="lg"
+                    isRound
+                  />
+                </HStack>
+              </VStack>
+            </Box>
+          )}
+        </HStack>
+      </Box>
+
+      <Modal isOpen={isOpen} onClose={onClose}>
+        <ModalOverlay />
+        <ModalContent>
+          <ModalHeader>Settings</ModalHeader>
+          <ModalCloseButton />
+          <ModalBody>
+            <VStack spacing={4}>
+              <HStack w="full">
+                <Avatar size="xl" src={user.photoURL} name={user.displayName} />
+                <VStack align="start" spacing={1}>
+                  <Text fontSize="sm" color="gray.500">Profile Picture</Text>
+                  <Button
+                    leftIcon={<FaPlus />}
+                    colorScheme="blue"
+                    onClick={() => photoInputRef.current.click()}
+                  >
+                    Change Photo
+                  </Button>
+                </VStack>
               </HStack>
+              <VStack w="full" align="start" spacing={1}>
+                <Text fontSize="sm" color="gray.500">Display Name</Text>
+                <Input
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  placeholder="Enter new display name"
+                />
+              </VStack>
             </VStack>
-          </Box>
-        )}
-      </HStack>
+          </ModalBody>
+          <ModalFooter>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handlePhotoChange}
+              ref={photoInputRef}
+              style={{ display: 'none' }}
+            />
+            <Button variant="ghost" mr={3} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              colorScheme="blue"
+              onClick={updateDisplayName}
+              isLoading={false}
+            >
+              Save Changes
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Box>
   );
 };
