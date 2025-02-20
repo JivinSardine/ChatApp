@@ -14,14 +14,20 @@ const firebaseConfig = {
     authDomain: "chat-app-19d1e.firebaseapp.com",
     databaseURL: "https://chat-app-19d1e-default-rtdb.firebaseio.com",
     projectId: "chat-app-19d1e",
-    storageBucket: "chat-app-19d1e.firebasestorage.app",
+    storageBucket: "chat-app-19d1e.appspot.com",
     messagingSenderId: "337572849635",
-    appId: "1:337572849635:web:6791a67a01d32ce18ce2d6"
-  };
+    appId: "1:337572849635:web:6791a67a01d32ce18ce2d6",
+    crossOriginIsolated: true,
+    crossOriginEmbedderPolicy: 'require-corp',
+    crossOriginOpenerPolicy: 'same-origin'
+};
 
-// Initialize Firebase
+// Initialize Firebase with custom auth settings
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
+auth.settings = {
+    appVerificationDisabledForTesting: false
+};
 export const database = getDatabase(app);
 
 function App() {

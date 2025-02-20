@@ -21,5 +21,11 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['simple-peer']
+  },
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp'
+    }
   }
 });

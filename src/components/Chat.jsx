@@ -229,13 +229,22 @@ const handleDeleteAccount = async () => {
     const usersRef = ref(database, 'users');
     onValue(usersRef, (snapshot) => {
       if (snapshot.exists()) {
-        setUsers(snapshot.val());
+        const usersData = snapshot.val();
+        // Filter out any null or undefined users (deleted accounts)
+        const filteredUsers = Object.entries(usersData)
+          .filter(([_, userData]) => userData !== null && userData !== undefined)
+          .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+        
+        setUsers(filteredUsers);
         // Update description state when users data changes
-        if (snapshot.val()[user.uid]?.description) {
-          setNewDescription(snapshot.val()[user.uid].description);
+        if (filteredUsers[user.uid]?.description) {
+          setNewDescription(filteredUsers[user.uid].description);
         }
+      } else {
+        setUsers({});
       }
     });
+
 
     // Cleanup
     return () => {
